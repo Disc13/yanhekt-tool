@@ -79,6 +79,7 @@ async function ensureReady() {
 
 /* 调用页面内方法 */
 async function call(method, args) {
+  if (!$('toggle').checked) throw new Error('扩展已关闭，请先启用');
   const tabId = await ensureReady();
   const res = await chrome.tabs.sendMessage(tabId, { type: 'yhkt:call', method, args: args || {} });
   if (!res) throw new Error('页面无响应');
@@ -153,45 +154,20 @@ function sessionCard(s) {
   el.className = 'session';
   el.innerHTML =
     '<div class="t">' + esc(s.title || ('节次 ' + s.id)) + '</div>' +
-    '<div class="m">' + esc(s.started_at || '') +
-      (s.videoId ? ' · 视频 ' + s.videoId : '') + '</div>';
+    '<div class="m">' + esc(s.started_at || '') + '</div>';
   const act = document.createElement('div');
   act.className = 'actions';
-  const b = document.createElement('button');
-  b.className = 'primary';
-  b.textContent = '▶ 播放';
-  b.onclick = () => playInPage(s.videoId, s.title);
-  act.appendChild(b);
-  const b2 = document.createElement('button');
-  b2.textContent = '复制直链';
-  b2.onclick = () => copyDirect(s.videoId);
-  act.appendChild(b2);
+  if (s.id != null) {
+    const open = document.createElement('button');
+    open.className = 'primary';
+    open.textContent = '打开原站课时';
+    open.onclick = () => chrome.tabs.create({
+      url: 'https://www.yanhekt.cn/session/' + encodeURIComponent(s.id)
+    });
+    act.appendChild(open);
+  }
   el.appendChild(act);
   return el;
-}
-
-/* ---------------- 播放 / 直链 ---------------- */
-async function playInPage(videoId, title) {
-  if (!videoId) { setStatus('该节次没有视频', true); return; }
-  setStatus('正在页面内解锁播放…');
-  try {
-    await call('play', { videoId, title: title || '' });
-    setStatus('已在页面上开始播放（切到浏览器标签页查看）');
-  } catch (e) {
-    setStatus('播放失败：' + e.message, true);
-  }
-}
-
-async function copyDirect(videoId) {
-  if (!videoId) return;
-  setStatus('生成直链…');
-  try {
-    const url = await call('directUrl', { videoId });
-    await navigator.clipboard.writeText(url);
-    setStatus('直链已复制（有效期约 10 分钟）');
-  } catch (e) {
-    setStatus('直链生成失败：' + e.message, true);
-  }
 }
 
 /* ---------------- 打开课程（从课程页进入时） ---------------- */
@@ -254,6 +230,10 @@ $('toggle').onchange = async (e) => {
 (async function init() {
   const st = await chrome.storage.local.get(['__yhkt_unlock_enabled']);
   $('toggle').checked = st.__yhkt_unlock_enabled !== false;
+  if (!$('toggle').checked) {
+    setStatus('扩展已关闭');
+    return;
+  }
 
   const tab = await findSiteTab();
   if (!tab) {

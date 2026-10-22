@@ -1,62 +1,44 @@
-# 延河课堂 · 课程解锁器（Edge / Chrome 扩展）
+# 延河课堂 · 课程解锁器
 
-在弹窗里浏览**全部课程**、列出**全部节次**、直接播放**无权限课程**的视频。
+浏览器扩展，提供课程与节次浏览和页面响应适配。播放统一在延河课堂原站进行，使用原站的双屏播放器。
 
-## 安装
+仅用于自己有权访问的课程。页面响应改写不改变服务器实际授予的权限。
 
-1. 打开 `edge://extensions/`（Chrome 用 `chrome://extensions/`）
-2. 打开右下角「开发人员模式」
-3. 点「加载解压缩的扩展」，选择本目录 `yanhekt-unlock`
-4. 先登录 <https://www.yanhekt.cn>，再点扩展图标
+## 安装与更新
 
-## 功能
+1. 打开 `edge://extensions/` 或 `chrome://extensions/`，开启开发人员模式。
+2. 加载本目录作为解压缩扩展。
+3. 登录 `https://www.yanhekt.cn` 并刷新站点页面，再打开扩展弹窗。
+4. 更新源码后重新加载扩展，并刷新已有站点标签页，让 MAIN / ISOLATED 两侧脚本一起更新。
 
-| 标签页 | 作用 |
-|---|---|
-| 全部课程 | 搜索 / 翻页浏览全站课程（3815 门），点「解锁节次」查看该课程全部节次 |
-| 节次列表 | 列出该课程所有节次（含无权限部分），点「▶ 播放」直接播放 |
-| 直接播放 | 输入课程 ID 快速载入 |
+## 使用
 
-每个节次另有「复制播放直链」，可粘贴到 PotPlayer / VLC / IDM 下载。
+- 在原站课程页浏览解锁后的目录，使用站点自己的播放器。
+- 在弹窗搜索课程，点击“打开课程页”进入原站。
+- 在节次列表点击“打开原站课时”，进入对应的 `/session/<id>` 页面。
+- “按 ID 查看”输入课程 ID，载入该课程的节次目录。
 
-## 工作原理
+开关关闭后停止页面响应适配和扩展发起的新调用。已发出的请求和页面先前消费的响应不会因此撤回，需要恢复原站页面状态时刷新页面。
 
+独立播放浮层和复制直链已删除；扩展不请求播放凭证、不组装 CDN 地址，也不加载 hls.js。
+
+## 文件与运行关系
+
+| 文件 | 职责 |
+| --- | --- |
+| `manifest.json` | MV3 配置和站点脚本声明 |
+| `background.js` | 首次初始化开关，更新时保留用户选择 |
+| `inject.js` | MAIN world：接口调用、响应适配与请求签名 |
+| `hook.js` | ISOLATED world：弹窗 RPC 桥及跨标签页开关同步 |
+| `popup.html/js` | 课程、节次目录及原站页面入口 |
+| `tests/extension.test.cjs` | 无账号、无外网请求的 Node 回归测试 |
+
+弹窗通过桥接在站点页面上下文中读取课程和节次。当前实现读取 v1 节次列表，适配原站 v2 调用方所需的数组或分页结构。接口错误保留为错误，不伪装成成功的空列表。
+
+## 开发检查
+
+```sh
+node --test tests/extension.test.cjs
 ```
-1. 全量课程      GET /v1/course/list                      —— 不做账号过滤
-2. 全量节次      GET /v1/course/session/list?course_id=   —— 不做权限过滤（v2 才过滤）
-3. 签发播放凭证  GET /v1/auth/video/token?id=<video_id>   —— 只验登录态，不验课程权限
-4. 组装播放地址
-     path/Video1/Video1.m3u8
-       → path/Video1/f4ff94d1bc715b077e1ebe03493799fd/Video1.m3u8
-     ?Xvideo_Token=<token>
-     &Xclient_Timestamp=<秒级时间戳>
-     &Xclient_Signature=md5("1138b69dfef641d9d7ba49137d2d4875" + "_v1_" + ts)
-     &Xclient_Version=v1&Platform=yhkt_user
-5. hls.js 播放（自动从 CDN 载入并缓存）
-```
 
-### 三个关键常量
-
-| 名称 | 值 | 说明 |
-|---|---|---|
-| xclient 签名密钥 | `1138b69dfef641d9d7ba49137d2d4875` | 前端硬编码，用于证明请求来自官方客户端 |
-| 视频路径段 | `f4ff94d1bc715b077e1ebe03493799fd` | cvideo 播放路径的固定目录段 |
-
-时间戳为秒级，签名窗口很短；若长时间挂起后播放失败，重新点一次「播放」即可。
-
-## 文件说明
-
-| 文件 | 运行环境 | 作用 |
-|---|---|---|
-| `manifest.json` | — | MV3 配置 |
-| `inject.js` | MAIN world | 拦截 permission 强制放行、组装播放地址、hls.js 播放器 |
-| `hook.js` | ISOLATED world | 在页面与扩展存储之间传递开关状态 |
-| `popup.html/js` | 弹窗 | 课程 / 节次浏览与播放入口 |
-| `background.js` | Service Worker | 初始化默认开关 |
-
-## 注意
-
-- 播放凭证 `Xvideo_Token` 有效期约 10 分钟，过期重新获取即可。
-- cvideo 要求请求携带 `Origin: https://www.yanhekt.cn`，所以播放器必须跑在页面内（`inject.js`），不能在弹窗里直接播放。
-- hls.js 首次使用需联网从 jsDelivr / unpkg 加载；之后会复用已注入实例。
-- 页面内的「关闭」按钮可随时退出播放器。
+测试覆盖开关、桥接、错误传播、MD5 一致性、原站课时入口和已删除 RPC 的拒绝行为，不连接平台。课程页解锁已由用户确认正常；删减后的界面仍需重新加载扩展并刷新页面后使用。

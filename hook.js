@@ -11,6 +11,8 @@
  * 避免从 chrome-extension:// 直接请求被服务端 403。
  */
 (function () {
+  if (window.__yhktBridgeInstalled) return;
+  window.__yhktBridgeInstalled = true;
   const KEY = '__yhkt_unlock_enabled';
   const pending = new Map();
   let seq = 0;
@@ -25,8 +27,12 @@
     }
   }
 
-  getEnabled().then((enabled) => {
-    document.dispatchEvent(new CustomEvent('__yhkt_config', { detail: { enabled } }));
+  function configure(enabled) {
+    window.dispatchEvent(new CustomEvent('__yhkt_config', { detail: { enabled } }));
+  }
+  getEnabled().then(configure);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[KEY]) configure(changes[KEY].newValue !== false);
   });
 
   /* ---------- 2) 接收 inject.js 的响应 ---------- */
@@ -67,7 +73,7 @@
 
     if (msg.type === 'yhkt:set-enabled') {
       try { chrome.storage.local.set({ [KEY]: msg.enabled }); } catch (e) {}
-      document.dispatchEvent(new CustomEvent('__yhkt_config', { detail: { enabled: msg.enabled } }));
+      configure(msg.enabled);
       sendResponse({ ok: true });
       return true;
     }

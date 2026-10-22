@@ -1,8 +1,7 @@
 /*
  * inject.js — MAIN world
  * 1) 强制 permission.allowed = true
- * 2) 提供 __yhkt.play(videoId) —— 完整实现「签发凭证 + 组装 URL + 带 Origin 拉流 + blob 播放」
- * 3) 提供 __yhkt.sessions(courseId) —— 走不过滤权限的 v1 接口
+ * 2) 提供 __yhkt.sessions(courseId) —— 读取节次目录
  */
 (function () {
   if (window.__yhktInstalled) return;
@@ -10,13 +9,17 @@
 
   const state = { enabled: true, log: [] };
   const XCLIENT_KEY = '1138b69dfef641d9d7ba49137d2d4875';
-  const PATH_SEG = 'f4ff94d1bc715b077e1ebe03493799fd';
   const API = 'https://cbiz.yanhekt.cn';
 
   const log = (...a) => {
     state.log.push({ t: Date.now(), msg: a.join(' ') });
     if (state.log.length > 300) state.log.shift();
   };
+
+  function requireEnabled() {
+    if (!state.enabled) throw new Error('扩展已关闭，请先启用');
+  }
+
 
   window.addEventListener('__yhkt_config', (e) => {
     state.enabled = !!(e.detail && e.detail.enabled);
@@ -101,7 +104,7 @@
 
   /* ---------- 响应改写 ---------- */
   function patchPerm(body) {
-    if (body && body.data && typeof body.data === 'object' && 'allowed' in body.data) {
+    if (body && (body.code === 0 || body.code === '0') && body.data && typeof body.data === 'object' && 'allowed' in body.data) {
       body.data.allowed = true;
       delete body.data.type;
       delete body.data.message;
@@ -160,10 +163,11 @@
   }
 
   function toArray(v1Body) {
+    assertApiBody(v1Body);
     const d = v1Body && v1Body.data;
     if (Array.isArray(d)) return d;
     if (d && Array.isArray(d.data)) return d.data;
-    return [];
+    throw new Error('节次列表格式异常');
   }
 
   const origFetch = window.fetch;
@@ -173,9 +177,10 @@
 
     /* 1) permission 强制放行 */
     if (url.indexOf('/v1/auth/permission') > -1) {
-      return origFetch.apply(this, arguments).then((res) =>
-        res.clone().json().then((j) => jsonResponse(patchPerm(j), res)).catch(() => res)
-      );
+      return origFetch.apply(this, arguments).then((res) => {
+        if (!res.ok) return res;
+        return res.clone().json().then((j) => jsonResponse(patchPerm(j), res)).catch(() => res);
+      });
     }
 
     /* 2) v2 受限接口 → v1 全量数据 */
@@ -184,7 +189,10 @@
       const plan = rule.build(url);
       if (!plan) break;
       return origFetch(plan.url, { headers: signHeaders(), credentials: 'omit' })
-        .then((r) => r.json())
+        .then((r) => {
+          if (!r.ok) throw new Error('接口请求失败 HTTP ' + r.status);
+          return r.json();
+        })
         .then((v1) => jsonResponse(plan.transform(v1), null))
         .catch(() => origFetch.apply(this, arguments));
     }
@@ -209,7 +217,7 @@
     xhr.open = function (m, u) { reqUrl = String(u); return o.apply(xhr, arguments); };
 
     xhr.addEventListener('readystatechange', () => {
-      if (!state.enabled || xhr.readyState !== 4) return;
+      if (!state.enabled || xhr.readyState !== 4 || xhr.status < 200 || xhr.status >= 300) return;
 
       // permission 放行
       if (reqUrl.indexOf('/v1/auth/permission') > -1) {
@@ -255,226 +263,21 @@
   window.XMLHttpRequest = PatchedXHR;
 
   /* ---------- 数据接口 ---------- */
-  async function jsonGet(path) {
-    const r = await origFetch(API + path, { headers: signHeaders(), credentials: 'omit' });
-    return r.json();
+  function assertApiBody(body) {
+    if (!body || (body.code !== 0 && body.code !== '0')) {
+      throw new Error((body && body.message) || '接口返回异常');
+    }
+    return body;
   }
 
-  state.sessions = async (courseId) => (await jsonGet('/v1/course/session/list?course_id=' + courseId)).data || [];
-  state.videoToken = async (videoId) => (await jsonGet('/v1/auth/video/token?id=' + videoId)).data.token;
-  state.videoUrl = async (videoId) => (await jsonGet('/v1/video?id=' + videoId)).data.main;
+  async function jsonGet(path) {
+    requireEnabled();
+    const r = await origFetch(API + path, { headers: signHeaders(), credentials: 'omit' });
+    if (!r.ok) throw new Error('接口请求失败 HTTP ' + r.status);
+    return assertApiBody(await r.json());
+  }
 
-  state.buildUrl = (raw, vt) => {
-    const ts = Math.floor(Date.now() / 1000);
-    const q = '?Xvideo_Token=' + vt +
-      '&Xclient_Timestamp=' + ts +
-      '&Xclient_Signature=' + md5(XCLIENT_KEY + '_v1_' + ts) +
-      '&Xclient_Version=v1&Platform=yhkt_user';
-    const i = raw.lastIndexOf('/');
-    return raw.substring(0, i) + '/' + PATH_SEG + raw.substring(i) + q;
-  };
-
-  /* ---------- 关键：构造可播放地址 ---------- */
-  // 注意：在页面上下文（www.yanhekt.cn）中 fetch cvideo 时，浏览器会自动附带
-  // Origin 与 Referer，CDN 校验通过。因此扩展只需组装正确 URL 交给 hls 播放。
-  state.fetchBlob = async (url) => {
-    const r = await origFetch(url, { credentials: 'omit' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.blob();
-  };
-
-  state.play = async ({ videoId }) => {
-    const vt = await state.videoToken(videoId);
-    const raw = await state.videoUrl(videoId);
-    if (!vt || !raw) throw new Error('no token/url');
-    const url = state.buildUrl(raw, vt);
-    state.lastUrl = url;
-    log('play', videoId, url.slice(0, 80));
-    return { url };
-  };
-
-  /* ---------- 全屏播放器 ---------- */
-  state.openPlayer = async (videoId, title) => {
-    const { url } = await state.play({ videoId });
-
-    let box = document.getElementById('__yhkt_player');
-    if (box) box.remove();
-    box = document.createElement('div');
-    box.id = '__yhkt_player';
-    box.style.cssText = [
-      'position:fixed', 'inset:0', 'z-index:2147483647',
-      'background:rgba(0,0,0,.94)', 'display:flex', 'flex-direction:column',
-      'align-items:center', 'justify-content:center', 'gap:12px'
-    ].join(';');
-
-    const bar = document.createElement('div');
-    bar.style.cssText = 'display:flex;gap:10px;align-items:center;color:#dfe6f0;font:14px "Microsoft YaHei",sans-serif';
-    const label = document.createElement('span');
-    label.textContent = title || ('视频 ' + videoId);
-    const btnClose = document.createElement('button');
-    btnClose.textContent = '关闭';
-    btnClose.style.cssText = 'padding:5px 14px;border-radius:6px;border:1px solid #3a4250;background:#232a35;color:#d7dde7;cursor:pointer';
-    btnClose.onclick = () => box.remove();
-    bar.appendChild(label);
-    bar.appendChild(btnClose);
-
-    const video = document.createElement('video');
-    video.controls = true;
-    video.autoplay = true;
-    video.style.cssText = 'width:min(1200px,92vw);max-height:78vh;background:#000;border-radius:8px';
-
-    const tip = document.createElement('div');
-    tip.style.cssText = 'color:#8b95a5;font:12px "Microsoft YaHei",sans-serif;max-width:90vw;word-break:break-all';
-    tip.textContent = '加载中…';
-
-    box.appendChild(bar);
-    box.appendChild(video);
-    box.appendChild(tip);
-    document.body.appendChild(box);
-
-    // 加载 hls.js（页面自带优先，否则从 CDN 动态载入）
-    const loadHls = () => new Promise((resolve) => {
-      if (window.Hls && window.Hls.isSupported) return resolve(window.Hls);
-      if (window.__yhkt_hlsLoading) {
-        window.__yhkt_hlsLoading.then(() => resolve(window.Hls || null));
-        return;
-      }
-      const urls = [
-        'https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js',
-        'https://unpkg.com/hls.js@1.5.13/dist/hls.min.js'
-      ];
-      window.__yhkt_hlsLoading = (async () => {
-        for (const u of urls) {
-          try {
-            const r = await origFetch(u, { credentials: 'omit' });
-            if (!r.ok) continue;
-            const code = await r.text();
-            const s = document.createElement('script');
-            s.textContent = code;
-            document.head.appendChild(s);
-            if (window.Hls) return window.Hls;
-          } catch (e) {}
-        }
-        return null;
-      })();
-      window.__yhkt_hlsLoading.then((h) => resolve(h || null));
-    });
-
-    tip.textContent = '加载播放引擎…';
-    const Hls = await loadHls();
-
-    if (Hls && typeof Hls.isSupported === 'function' && Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: false,
-        xhrSetup: (xhr) => { try { xhr.withCredentials = false; } catch (e) {} }
-      });
-      hls.on(Hls.Events.ERROR, (evt, data) => {
-        if (data && data.fatal) {
-          tip.textContent = 'HLS 错误：' + data.type + '/' + data.details;
-          if (data.type === 'networkError') {
-            tip.textContent += '（凭证可能过期，请重新点击播放）';
-          }
-        }
-      });
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        tip.textContent = 'hls.js 已就绪 · 开始播放';
-        video.play().catch(() => {});
-      });
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      state._stop = () => { try { hls.destroy(); } catch (e) {} };
-      return url;
-    }
-
-    // 兜底：MSE 直接塞 TS（部分内核可解）
-    tip.textContent = 'hls.js 未加载成功，尝试 MSE 直塞…';
-    const plRes = await origFetch(url, { credentials: 'omit' });
-    if (!plRes.ok) { tip.textContent = '播放列表请求失败 HTTP ' + plRes.status; return url; }
-    const text = await plRes.text();
-    const dir = url.substring(0, url.lastIndexOf('/') + 1);
-    const qs = url.substring(url.indexOf('?'));
-    const segs = text.split('\n').map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('#'))
-      .map((l) => dir + l + (l.indexOf('?') > -1 ? '' : qs));
-    if (!segs.length) { tip.textContent = '播放列表为空'; return url; }
-
-    const MSE = window.MediaSource || window.WebKitMediaSource;
-    if (!MSE) {
-      video.src = url;
-      tip.textContent = '浏览器不支持 MSE，已回退为直链（可能无法播放 HLS）';
-      return url;
-    }
-
-    // 探测可用的 SourceBuffer 类型
-    const MIMES = [
-      'video/mp2t',
-      'video/mp4; codecs="avc1.64001f,mp4a.40.2"',
-      'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
-      'video/mp4; codecs="avc1.42E01E"',
-      'video/mp4'
-    ];
-    const usable = MIMES.filter((m) => { try { return MSE.isTypeSupported(m); } catch (e) { return false; } });
-
-    const ms = new MSE();
-    video.src = URL.createObjectURL(ms);
-    let sb = null, idx = 0, playing = false, mimeIdx = 0;
-
-    const tryCreateBuffer = () => {
-      while (mimeIdx < usable.length) {
-        try {
-          return ms.addSourceBuffer(usable[mimeIdx]);
-        } catch (e) {
-          mimeIdx++;
-        }
-      }
-      return null;
-    };
-
-    const appendNext = () => {
-      if (idx >= segs.length) { tip.textContent = '播放完成 · 共 ' + segs.length + ' 段'; return; }
-      tip.textContent = 'MSE 播放 · ' + (idx + 1) + '/' + segs.length + ' 段 · ' + url.slice(0, 60) + '…';
-      origFetch(segs[idx], { credentials: 'omit' }).then((r) => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.arrayBuffer();
-      }).then((ab) => {
-        if (!sb) return;
-        if (sb.updating) { setTimeout(appendNext, 60); return; }
-        idx++;
-        try {
-          sb.appendBuffer(new Uint8Array(ab));
-          if (!playing && idx >= 1) {
-            playing = true;
-            video.play().catch(() => {});
-          }
-        } catch (e) {
-          tip.textContent = '分片写入失败：' + e.message;
-        }
-      }).catch((e) => {
-        tip.textContent = '分片下载失败：' + e.message + '（第 ' + (idx + 1) + ' 段）';
-      });
-    };
-
-    ms.addEventListener('sourceopen', () => {
-      sb = tryCreateBuffer();
-      if (!sb) {
-        tip.textContent = '当前浏览器无可用 MSE 编码（已尝试：' + MIMES.join(' / ') + '）。请点「复制播放直链」用 PotPlayer / VLC 播放。';
-        video.style.display = 'none';
-        return;
-      }
-      tip.textContent = 'MSE 缓冲类型：' + usable[mimeIdx];
-      sb.addEventListener('updateend', () => setTimeout(appendNext, 40));
-      appendNext();
-    });
-    ms.addEventListener('error', () => { tip.textContent = 'MediaSource 错误'; });
-
-    state._stop = () => {
-      try { if (sb && sb.updating) sb.abort(); } catch (e) {}
-      try { if (ms.readyState === 'open') ms.endOfStream(); } catch (e) {}
-    };
-    return url;
-  };
-
-  state.log = state.log;
+  state.sessions = async (courseId) => toArray(await jsonGet('/v1/course/session/list?course_id=' + courseId));
 
   /* ---------- RPC 服务端：响应 hook.js 的调用 ---------- */
   // 所有请求都在页面上下文执行，Origin = https://www.yanhekt.cn，服务端正常放行
@@ -504,21 +307,9 @@
         id: s.id,
         title: s.title,
         started_at: s.started_at,
-        location: s.location,
-        videoId: (s.video_ids && s.video_ids[0]) || null
+        location: s.location
       }))
     ),
-
-    // 播放
-    play: (p) => state.openPlayer(p.videoId, p.title || ''),
-
-    // 生成直链
-    directUrl: async (p) => {
-      const vt = await state.videoToken(p.videoId);
-      const raw = await state.videoUrl(p.videoId);
-      if (!vt || !raw) throw new Error('无法获取凭证或地址');
-      return state.buildUrl(raw, vt);
-    },
 
     // 是否已登录
     authState: () => ({ token: !!getToken() })
@@ -534,7 +325,10 @@
       return;
     }
     Promise.resolve()
-      .then(() => fn(d.args || {}))
+      .then(() => {
+        if (d.method !== 'ping' && d.method !== 'authState') requireEnabled();
+        return fn(d.args || {});
+      })
       .then((result) => window.postMessage({ __yhkt_res: true, id: d.id, result }, '*'))
       .catch((e) => window.postMessage({ __yhkt_res: true, id: d.id, error: String((e && e.message) || e) }, '*'));
   });

@@ -1,16 +1,13 @@
 {
   "manifest_version": 3,
   "name": "延河课堂 · 课程解锁器",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "在课程页解锁全部节次与视频播放，绕过前端权限隐藏。",
   "minimum_chrome_version": "102",
   "permissions": ["storage", "scripting", "activeTab", "tabs"],
   "host_permissions": [
     "https://www.yanhekt.cn/*",
-    "https://cbiz.yanhekt.cn/*",
-    "https://cvideo.yanhekt.cn/*",
-    "https://cdn.jsdelivr.net/*",
-    "https://unpkg.com/*"
+    "https://cbiz.yanhekt.cn/*"
   ],
   "background": {
     "service_worker": "background.js"
