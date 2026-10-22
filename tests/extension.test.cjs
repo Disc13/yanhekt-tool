@@ -27,7 +27,8 @@ function page(body = { code: 0, data: [] }) {
     ...surface(),
     fetch: async (url, options) => {
       requests.push({ url, options });
-      return new Response(JSON.stringify(body), { status: 200 });
+      const value = typeof body === 'function' ? await body(url, options) : body;
+      return value instanceof Response ? value : new Response(JSON.stringify(value), { status: 200 });
     },
     XMLHttpRequest: function () {},
     postMessage: message => replies.push(message),
@@ -204,14 +205,41 @@ test('scan batch is bounded and rejects HTTP errors instead of skipping IDs', as
   app.window.dispatchEvent({ type: 'message', source: app.window,
     data: { __yhkt_req: true, id: 1, method: 'scanBatch', args: { start: 1, end: 1000, limit: 200 } } });
   await tick();
-  assert.equal(app.requests.length, 20);
-  assert.equal(app.replies[0].result.next, 21);
+  assert.equal(app.requests.length, 200);
+  assert.equal(app.replies[0].result.next, 201);
   const denied = page({ code: 403, message: 'fixture denied' });
   denied.window.dispatchEvent({ type: 'message', source: denied.window,
     data: { __yhkt_req: true, id: 1, method: 'scanBatch', args: { start: 1, end: 2 } } });
   await tick();
   assert.match(denied.replies[0].error, /fixture denied/);
   assert.equal(denied.replies[0].result, undefined);
+});
+
+test('100 and 200 ID batches keep active requests bounded to 20', async () => {
+  for (const limit of [100, 200, 1000]) {
+    let active = 0, peak = 0;
+    const app = page(async () => {
+      peak = Math.max(peak, ++active);
+      await tick();
+      active--;
+      return { code: 0, data: null };
+    });
+    app.window.dispatchEvent({ type: 'message', source: app.window,
+      data: { __yhkt_req: true, id: 1, method: 'scanBatch', args: { start: 1, end: 1000, limit } } });
+    for (let i = 0; i < 30 && !app.replies.length; i++) await tick();
+    assert.equal(app.requests.length, Math.min(limit, 200));
+    assert.equal(app.replies[0].result.scanned, Math.min(limit, 200));
+    assert.ok(peak <= 20, 'must not launch 200 simultaneous requests');
+  }
+});
+
+test('scan dropdown restores saved 200 ID batch without changing cache', async () => {
+  const cached = { items: [{ id: 1 }], lastId: 1 };
+  const app = popup({ scan_batch_size: 200, 'scan_cache_2025-2026__partial': cached });
+  await tick();
+  assert.equal(app.elements.get('dd-scan-batch-label').textContent, '200 条 / 批');
+  assert.equal(vm.runInContext('scanBatchSize', app.context), 200);
+  assert.equal(app.storage['scan_cache_2025-2026__partial'], cached);
 });
 
 function setScanTarget(context, end = 40) {

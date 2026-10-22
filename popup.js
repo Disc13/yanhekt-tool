@@ -306,8 +306,20 @@ let scanning = false;
 let scanAbort = false;
 let scanHits = [];
 
-const SCAN_BATCH = 20;
-const SCAN_DELAY = 1000;
+let scanBatchSize = 100;
+const SCAN_DELAY = 150;
+
+function initScanBatchDropdown(saved) {
+  scanBatchSize = Number(saved) === 200 ? 200 : 100;
+  buildDropdown('dd-scan-batch', 'dd-scan-batch-btn', 'dd-scan-batch-label', 'dd-scan-batch-list',
+    [100, 200].map((n) => ({ value: n, label: n + ' 条 / 批', selected: n === scanBatchSize })),
+    (value) => {
+      if (scanning) return;
+      scanBatchSize = value;
+      chrome.storage.local.set({ scan_batch_size: value }).catch((e) => setStatus('批次设置未保存：' + e.message, 'err'));
+    });
+  $('dd-scan-batch-label').textContent = scanBatchSize + ' 条 / 批';
+}
 
 function scanCacheKey(year) { return 'scan_cache_' + year; }
 
@@ -451,13 +463,16 @@ async function startScan() {
   scanning = true;
   scanAbort = false;
   const { start, end, year } = scanTarget;
+  const batchSize = scanBatchSize;
   const total = end - start + 1;
   let cursor = start, scanned = 0, loaded = false;
   scanHits = [];
   $('btn-scan').disabled = true;
   $('btn-scan-stop').disabled = false;
   $('dd-scan-year-btn').disabled = true;
+  $('dd-scan-batch-btn').disabled = true;
   $('dd-scan-year-list').classList.remove('open');
+  $('dd-scan-batch-list').classList.remove('open');
   $('btn-clear-cache').disabled = true;
   $('scan-result').innerHTML = '';
   resetScanUI();
@@ -481,8 +496,8 @@ async function startScan() {
     setStatus(`扫描 ${year}，从 ID ${cursor} 开始；可停止后续扫`);
 
     while (cursor <= end && !scanAbort) {
-      const batchEnd = Math.min(cursor + SCAN_BATCH - 1, end);
-      const r = await scanWithTimeout({ start: cursor, end: batchEnd, limit: SCAN_BATCH });
+      const batchEnd = Math.min(cursor + batchSize - 1, end);
+      const r = await scanWithTimeout({ start: cursor, end: batchEnd, limit: batchSize });
       if (!r || !Array.isArray(r.items) || !Number.isInteger(r.next) ||
           r.next <= cursor || r.next > batchEnd + 1 || r.scanned !== r.next - cursor) {
         throw new Error('扫描响应格式异常，未推进断点');
@@ -521,6 +536,7 @@ async function startScan() {
     $('btn-scan').disabled = false;
     $('btn-scan-stop').disabled = true;
     $('dd-scan-year-btn').disabled = false;
+    $('dd-scan-batch-btn').disabled = false;
     $('btn-clear-cache').disabled = false;
   }
 }
@@ -603,11 +619,12 @@ $('toggle').onchange = async (e) => {
 
 /* ---------------- 启动 ---------------- */
 (async function init() {
-  const st = await chrome.storage.local.get(['__yhkt_unlock_enabled']);
+  const st = await chrome.storage.local.get(['__yhkt_unlock_enabled', 'scan_batch_size']);
   $('toggle').checked = st.__yhkt_unlock_enabled !== false;
 
   initSemesterDropdown();
   initScanDropdown();
+  initScanBatchDropdown(st.scan_batch_size);
   if (!$('toggle').checked) {
     setStatus('扩展已关闭');
     return;

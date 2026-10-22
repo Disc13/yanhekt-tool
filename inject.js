@@ -441,38 +441,47 @@
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
         throw new Error('扫描区间无效');
       }
-      const limit = Math.max(1, Math.min(Number(p.limit) || 20, 20));
+      const requested = Number(p.limit);
+      const limit = Number.isFinite(requested) ? Math.max(1, Math.min(Math.floor(requested), 200)) : 100;
       const ids = [];
       for (let i = start; i <= end && ids.length < limit; i++) ids.push(i);
       const hdrs = signHeaders();
-      let batchError = null;
-      const results = await Promise.all(ids.map(async (id) => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 10000);
-        try {
-          const r = await origFetch(API + '/v1/course?id=' + id, {
-            headers: hdrs, credentials: 'omit', signal: controller.signal
-          });
-          if (r.status === 404) return null;
-          if (!r.ok) throw new Error('扫描请求失败 HTTP ' + r.status);
-          const j = await r.json();
-          if (j && j.code !== 0 && j.code !== '0' && /不存在|未找到|not found/i.test(j.message || '')) return null;
-          assertApiBody(j);
-          return j.data && j.data.id ? {
-            id: j.data.id,
-            name: j.data.name_zh || '',
-            year: j.data.school_year || '',
-            semester: j.data.semester,
-            state: j.data.state,
-            visibility: j.data.visibility,
-            college: j.data.college_name || ''
-          } : null;
-        } catch (e) {
-          batchError = e;
-          return null;
-        } finally { clearTimeout(timer); }
-      }));
-      if (batchError) throw batchError; // 整批重试，不把网络失败当成不存在并跳过游标
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      let cursor = 0, batchError = null;
+      const results = new Array(ids.length).fill(null);
+      try {
+        // 每批 100 / 200 个 ID 不等于同时发出 100 / 200 个请求。
+        await Promise.all(Array.from({ length: Math.min(20, ids.length) }, async () => {
+          while (cursor < ids.length && !batchError) {
+            const index = cursor++, id = ids[index];
+            try {
+              requireEnabled();
+              const r = await origFetch(API + '/v1/course?id=' + id, {
+                headers: hdrs, credentials: 'omit', signal: controller.signal
+              });
+              if (r.status === 404) continue;
+              if (!r.ok) throw new Error('扫描请求失败 HTTP ' + r.status);
+              const j = await r.json();
+              if (j && j.code !== 0 && j.code !== '0' && /不存在|未找到|not found/i.test(j.message || '')) continue;
+              assertApiBody(j);
+              if (j.data && j.data.id) results[index] = {
+                id: j.data.id,
+                name: j.data.name_zh || '',
+                year: j.data.school_year || '',
+                semester: j.data.semester,
+                state: j.data.state,
+                visibility: j.data.visibility,
+                college: j.data.college_name || ''
+              };
+            } catch (e) {
+              batchError ||= e;
+              controller.abort();
+            }
+          }
+        }));
+      } finally { clearTimeout(timer); }
+      if (batchError) throw batchError; // 整批重试，不把失败当成不存在并跳过游标
       return { items: results.filter(Boolean), scanned: ids.length, next: ids[ids.length - 1] + 1 };
     },
 

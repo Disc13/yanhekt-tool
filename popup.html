@@ -167,6 +167,13 @@
         <button id="btn-scan-stop" disabled>停止</button>
       </div>
       <div class="progress"><div class="bar" id="scan-bar"></div></div>
+      <div class="row">
+        <div class="dd" id="dd-scan-batch">
+          <button class="dd-btn" id="dd-scan-batch-btn"><span id="dd-scan-batch-label">100 条 / 批</span><span class="arrow">▾</span></button>
+          <div class="dd-list" id="dd-scan-batch-list"></div>
+        </div>
+        <span class="hint">最多 20 个并发请求</span>
+      </div>
       <div class="scan-stat">
         <span>已扫描 <b id="scan-done">0</b> 个 ID</span>
         <span>命中 <b id="scan-hit">0</b></span>
