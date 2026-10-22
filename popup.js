@@ -102,7 +102,7 @@ function courseCard(c) {
   act.className = 'actions';
   const b1 = document.createElement('button');
   b1.className = 'primary';
-  b1.textContent = '解锁节次';
+  b1.textContent = '查看节次';
   b1.onclick = () => loadSessions(c.id, name);
   const b2 = document.createElement('button');
   b2.textContent = '打开课程页';
@@ -143,7 +143,7 @@ async function loadSessions(courseId, name) {
       return;
     }
     list.forEach((s) => $('sessions').appendChild(sessionCard(s)));
-    setStatus('已解锁 ' + list.length + ' 个节次');
+    setStatus('已载入 ' + list.length + ' 个节次');
   } catch (e) {
     setStatus('节次加载失败：' + e.message, true);
   }

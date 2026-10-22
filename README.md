@@ -1,10 +1,10 @@
-# 延河课堂 · 课程解锁器
+# yanhekttool
 
 把课程搜索和节次目录放到浏览器里，播放继续使用延河课堂原站的双屏播放器。
 
 **适用：桌面版 Microsoft Edge / Google Chrome。无需 Python、Node.js 或命令行。**
 
-[下载源码 ZIP](https://github.com/Disc13/yanhekt-unlock/archive/refs/heads/master.zip) · [反馈问题](https://github.com/Disc13/yanhekt-unlock/issues)
+[下载源码 ZIP](https://github.com/Disc13/yanhekt-tool/archive/refs/heads/master.zip) · [反馈问题](https://github.com/Disc13/yanhekt-tool/issues)
 
 > 非官方学习辅助工具，与延河课堂及学校无隶属关系。请仅访问自己有权观看的课程，遵守平台规则与课程资料的使用约定。
 
@@ -23,7 +23,7 @@
 
 点击上方“下载源码 ZIP”，或在仓库首页选择 **Code → Download ZIP**，然后解压。
 
-找到包含 `manifest.json` 的文件夹，通常叫 `yanhekt-unlock-master`。后面加载的是这个文件夹，不是 ZIP 文件，也不是单个 `manifest.json`。
+找到包含 `manifest.json` 的文件夹，通常叫 `yanhekt-tool-master`。后面加载的是这个文件夹，不是 ZIP 文件，也不是单个 `manifest.json`。
 
 ### 2. 打开扩展管理页
 
@@ -40,7 +40,7 @@
 
 点击 **加载解压缩的扩展 / Load unpacked**，选择第 1 步找到的文件夹。
 
-看到“延河课堂 · 课程解锁器”卡片后，确认扩展已启用。可以在浏览器工具栏的扩展菜单里固定它，方便下次打开。
+看到“yanhekttool”卡片后，确认扩展已启用。可以在浏览器工具栏的扩展菜单里固定它，方便下次打开。
 
 ### 4. 登录原站并刷新
 
@@ -51,7 +51,7 @@
 ## 怎么用
 
 - **浏览课程**：在弹窗搜索课程，点“打开课程页”。
-- **查看节次**：点“解锁节次”，再点“打开原站课时”。
+- **查看节次**：点“查看节次”，再点“打开原站课时”。
 - **按 ID 查找**：从原站课程页 `/course/12345` 取出数字，填入“按 ID 查看”。这里要填课程 ID，不是 `/session/` 后面的课时 ID。
 - **关闭功能**：关闭弹窗右上角开关。若要还原页面先前显示的内容，再刷新原站页面。
 
@@ -98,7 +98,7 @@
 
 ## 反馈
 
-在 [Issues](https://github.com/Disc13/yanhekt-unlock/issues) 中描述浏览器版本、操作步骤、预期结果和实际表现。截图请遮去姓名、学号等信息，**不要上传密码、Cookie、Token 或带临时凭证的地址**。
+在 [Issues](https://github.com/Disc13/yanhekt-tool/issues) 中描述浏览器版本、操作步骤、预期结果和实际表现。截图请遮去姓名、学号等信息，**不要上传密码、Cookie、Token 或带临时凭证的地址**。
 
 ## 开发者
 
