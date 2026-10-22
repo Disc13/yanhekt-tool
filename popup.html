@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    width: 400px;
+    max-height: 580px;
+    font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #14161a;
+    color: #e8eaed;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid #262a31;
+    background: linear-gradient(135deg, #1b2a4a, #16202f);
+  }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  .sub { font-size: 11px; color: #8b95a5; margin-top: 2px; }
+  .switch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .switch input { width: 16px; height: 16px; accent-color: #4c8dff; }
+  .tabs { display: flex; border-bottom: 1px solid #262a31; }
+  .tab {
+    flex: 1; padding: 9px 0; text-align: center; cursor: pointer;
+    font-size: 12px; color: #8b95a5; border-bottom: 2px solid transparent;
+    user-select: none;
+  }
+  .tab.active { color: #6ea8ff; border-bottom-color: #4c8dff; }
+  .panel { display: none; padding: 10px 12px; overflow-y: auto; max-height: 470px; }
+  .panel.active { display: block; }
+  .row {
+    display: flex; gap: 8px; margin-bottom: 8px;
+  }
+  input[type=text], input[type=number] {
+    flex: 1; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid #2e343d; background: #1b1f26; color: #e8eaed;
+    font-size: 12px; outline: none; min-width: 0;
+  }
+  input:focus { border-color: #4c8dff; }
+  button {
+    padding: 6px 12px; border-radius: 6px; border: 1px solid #3a4250;
+    background: #232a35; color: #d7dde7; font-size: 12px; cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover { background: #2c3542; border-color: #4c8dff; }
+  button.primary { background: #2f6ae0; border-color: #2f6ae0; color: #fff; }
+  button.primary:hover { background: #3d7bf0; }
+  .course {
+    padding: 9px 10px; border-radius: 8px; background: #1b1f26;
+    border: 1px solid #262c35; margin-bottom: 7px;
+  }
+  .course .name { font-size: 12.5px; font-weight: 600; color: #dfe6f0; }
+  .course .meta { font-size: 11px; color: #7d8798; margin-top: 3px; }
+  .course .actions { margin-top: 7px; display: flex; gap: 6px; }
+  .course .actions button { padding: 4px 9px; font-size: 11px; }
+  .session {
+    padding: 7px 10px; border-left: 2px solid #2f6ae0;
+    background: #191d24; margin-bottom: 5px; border-radius: 0 6px 6px 0;
+  }
+  .session .t { font-size: 12px; color: #cfd6e2; }
+  .session .m { font-size: 11px; color: #78828f; margin-top: 2px; }
+  .session .play { margin-top: 5px; }
+  .hint { font-size: 11px; color: #6b7482; padding: 6px 2px; }
+  .tag {
+    display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    background: #24344f; color: #7fa8e8; margin-left: 6px;
+  }
+  #status { font-size: 11px; padding: 6px 12px; color: #7d8798; border-top: 1px solid #262a31; }
+  .err { color: #ff7b72; }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>延河课堂 · 课程解锁器</h1>
+      <div class="sub">全量课程 · 全量节次 · 直接播放</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="toggle" checked />
+      <span>解锁</span>
+    </label>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="all">全部课程</div>
+    <div class="tab" data-tab="sessions">节次列表</div>
+    <div class="tab" data-tab="direct">直接播放</div>
+  </div>
+
+  <div class="panel active" id="panel-all">
+    <div class="row">
+      <input type="text" id="kw" placeholder="按课程名 / 课程号 / 教师搜索" />
+      <button class="primary" id="btn-search">搜索</button>
+    </div>
+    <div class="row">
+      <input type="number" id="page" value="1" min="1" style="max-width:70px" />
+      <button id="btn-prev">上一页</button>
+      <button id="btn-next">下一页</button>
+      <span class="hint" id="pageInfo" style="align-self:center"></span>
+    </div>
+    <div id="courses"></div>
+  </div>
+
+  <div class="panel" id="panel-sessions">
+    <div class="hint" id="sessTitle">从「全部课程」点「节次」载入</div>
+    <div id="sessions"></div>
+  </div>
+
+  <div class="panel" id="panel-direct">
+    <div class="row">
+      <input type="text" id="courseId" placeholder="课程 ID（如 77466）" />
+      <button id="btn-load" class="primary">载入</button>
+    </div>
+    <div id="directList"></div>
+  </div>
+
+  <div id="status">就绪</div>
+  <script src="popup.js"></script>
+</body>
+</html>
