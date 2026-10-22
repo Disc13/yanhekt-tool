@@ -90,6 +90,7 @@ function popup(storage = {}) {
   const elements = new Map(), tabs = [];
   function element() {
     return { children: [], style: {}, textContent: '', classList: { toggle() {}, remove() {}, add() {}, contains() { return false; } },
+      set innerHTML(value) { this.html = value; this.children = []; }, get innerHTML() { return this.html || ''; },
       value: '', checked: true, querySelectorAll: () => [],
       addEventListener() {}, appendChild(child) { this.children.push(child); } };
   }
@@ -108,9 +109,121 @@ function popup(storage = {}) {
     },
     setTimeout, clearTimeout, console,
   });
+  vm.runInContext(read('catalog.js'), context);
+  context.YhktCatalog.load = async () => null;
   vm.runInContext(read('popup.js'), context);
   return { context, elements, tabs, storage };
 }
+
+test('shared catalogue validates full and compact formats, strips extra fields and rejects duplicate IDs', () => {
+  const context = vm.createContext({});
+  vm.runInContext(read('catalog.js'), context);
+  const c = context.YhktCatalog;
+  const row = { id: 1, name: '数学', code: 'M1', year: '2025-2026', semester: 1, college: '学院', visibility: 2, state: 1, listed: false, token: 'never keep', courseUrl: 'https://evil.invalid' };
+  const full = { metadata: { date: '2026-10-22', recordCount: 1 }, courses: [row] };
+  assert.equal(c.normalize(full).courses[0].token, undefined);
+  assert.equal(c.normalize(full).courses[0].courseUrl, undefined);
+  const columns = ['id', 'name', 'code', 'year', 'semester', 'college', 'visibility', 'state', 'listed'];
+  const compact = { ...full, schemaVersion: 1, columns, courses: [columns.map(k => k === 'listed' ? 0 : row[k])] };
+  assert.equal(c.normalize(compact).courses[0].id, 1);
+  assert.throws(() => c.normalize({ ...full, metadata: { ...full.metadata, recordCount: 2 }, courses: [row, row] }), /重复/);
+  assert.throws(() => c.normalize({ ...full, metadata: { ...full.metadata, recordCount: 99 } }), /条数/);
+  assert.throws(() => c.normalize({ ...compact, schemaVersion: 2 }), /版本/);
+  assert.throws(() => c.normalize({ ...full, courses: [{ ...row, id: '<script>' }] }), /ID/);
+});
+
+test('shared baseline merges by ID without losing code or overwriting personal storage', async () => {
+  const app = popup({ scan_cache_2025: 'fixture' });
+  await tick();
+  const c = app.context.YhktCatalog;
+  const shared = { courses: [{ id: 1, name: '旧名', code: 'M1', year: '2025-2026' }, { id: 2, name: '物理' }] };
+  const rows = c.merge(shared, [{ id: 1, name: '数学', year: '2025-2026', semester: 1 }]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find(r => r.id === 1).code, 'M1');
+  assert.equal(c.search(rows, '数学 M1', '2025-2026', '1').length, 1);
+  assert.equal(app.storage.scan_cache_2025, 'fixture');
+});
+
+test('empty keyword shows all local matches in 50-row pages without a site tab or network', async () => {
+  const app = popup(); await tick();
+  app.context.YhktCatalog.load = async () => ({ metadata: { recordCount: 121, date: '2026-10-22' },
+    courses: Array.from({ length: 121 }, (_, i) => ({ id: i + 1, name: '课程' + i })) });
+  app.context.call = async () => { throw new Error('must remain offline'); };
+  await app.context.loadCourses(1);
+  assert.equal(app.elements.get('courses').children.length, 50);
+  assert.match(app.elements.get('pageInfo').textContent, /121.*1\/3/);
+  await app.context.loadCourses(3);
+  assert.equal(app.elements.get('courses').children.length, 21);
+  assert.equal(app.elements.get('btn-next').disabled, true);
+});
+
+test('catalogue update checks hashes before opening storage and never sends credentials', async () => {
+  const requests = [];
+  const payload = new TextEncoder().encode('{}');
+  const manifest = { schemaVersion: 1, dataPath: 'data/catalog.json', sha256: '0'.repeat(64), byteLength: payload.length };
+  const context = vm.createContext({ TextDecoder, AbortController, setTimeout, clearTimeout,
+    crypto: crypto.webcrypto, fetch: async (url, options) => {
+      requests.push({ url, options });
+      return new Response(url.endsWith('catalog-manifest.json') ? JSON.stringify(manifest) : payload);
+    } });
+  vm.runInContext(read('catalog.js'), context);
+  assert.equal(requests.length, 0);
+  await assert.rejects(context.YhktCatalog.update(), /完整性/);
+  assert.equal(requests.length, 2);
+  for (const r of requests) { assert.equal(r.options.credentials, 'omit'); assert.equal(r.options.redirect, 'error'); assert.match(r.url, /^https:\/\/raw.githubusercontent.com\/Disc13\/yanhekt-catalog\/main\//); }
+});
+
+test('catalogue storage commits separately, abort preserves old snapshot, removal leaves personal cache', async () => {
+  let snapshot = null, failWrite = false;
+  const personal = { scan_cache_2025: ['keep'] };
+  const indexedDB = { open(name) {
+    assert.equal(name, 'yanhekt-shared-catalog');
+    const open = {};
+    open.result = { close() {}, transaction(store, mode) {
+      assert.equal(store, 'snapshots');
+      const tx = { objectStore() {
+        return { get() { return { result: snapshot }; }, put(value) {
+          const req = { result: 'current' };
+          tx.pending = value; return req;
+        }, delete() { tx.pending = null; return {}; } };
+      } };
+      setImmediate(() => {
+        if (mode === 'readwrite' && failWrite) { tx.error = new Error('quota fixture'); tx.onabort(); }
+        else { if (mode === 'readwrite') snapshot = tx.pending; tx.oncomplete(); }
+      });
+      return tx;
+    } };
+    setImmediate(() => open.onsuccess());
+    return open;
+  } };
+  const context = vm.createContext({ indexedDB });
+  vm.runInContext(read('catalog.js'), context);
+  const c = context.YhktCatalog;
+  const input = { metadata: { date: '2026-10-22', recordCount: 1 }, courses: [
+    { id: 1, name: '数学', code: 'M', year: '2025-2026', semester: 1, college: '', visibility: 2, state: 1, listed: false }] };
+  assert.equal(await c.load(), null);
+  await c.save(input);
+  assert.equal((await c.load()).courses[0].id, 1);
+  failWrite = true;
+  await assert.rejects(c.save({ ...input, courses: [{ ...input.courses[0], id: 2 }] }), /quota/);
+  assert.equal((await c.load()).courses[0].id, 1);
+  failWrite = false; await c.remove();
+  assert.equal(await c.load(), null);
+  assert.deepEqual(personal, { scan_cache_2025: ['keep'] });
+});
+
+test('declining optional GitHub permission never downloads data', async () => {
+  const elements = new Map();
+  let updates = 0;
+  const context = vm.createContext({ document: { getElementById(id) {
+    if (!elements.has(id)) elements.set(id, {}); return elements.get(id);
+  } }, chrome: { permissions: { request: async () => false } },
+  YhktCatalog: { ORIGIN: 'https://raw.githubusercontent.com/*', load: async () => null, update: async () => { updates++; } } });
+  vm.runInContext(read('catalog-manager.js'), context);
+  elements.get('update').onclick(); await tick();
+  assert.equal(updates, 0);
+  assert.match(elements.get('status').textContent, /未授予/);
+});
 
 test('native session entry remains available alongside optional single-stream playback', async () => {
   const { context, tabs } = popup();

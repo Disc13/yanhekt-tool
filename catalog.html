@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>yanhekttool · 共享目录</title>
+<link rel="stylesheet" href="catalog.css"></head><body>
+<main><h1>共享课程目录</h1>
+<p>目录只用于检索，不包含录像、账号或播放地址，也不代表课程观看权限。</p>
+<p id="current">正在读取本地目录…</p>
+<button id="update">从 GitHub 更新</button>
+<label>或导入 JSON <input id="file" type="file" accept=".json,application/json"></label>
+<button id="remove">移除共享目录</button>
+<p id="status" role="status" aria-live="polite"></p>
+<p>更新只在点击时下载目录数据，首次需允许访问 GitHub 文件域名。导入成功后重新打开插件弹窗，在“本地目录”搜索；无需先登录或重新扫描。个人扫描缓存与共享目录分开保存，移除一方不影响另一方。</p>
+<p>GitHub 无法访问时，可从分享包中选择 <code>yanhekt-catalog-2026-10-22.json</code>，或仓库中的 <code>data/catalog.json</code>。更新或导入失败时保留上一份目录。</p>
+<p><a href="https://github.com/Disc13/yanhekt-catalog" target="_blank" rel="noopener noreferrer">目录仓库与分享包</a> · <a href="https://github.com/Disc13/yanhekt-tool" target="_blank" rel="noopener noreferrer">插件说明</a></p>
+</main><script src="catalog.js"></script><script src="catalog-manager.js"></script></body></html>

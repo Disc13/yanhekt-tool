@@ -129,8 +129,12 @@
   <!-- 课程搜索 -->
   <div class="panel active" id="panel-all">
     <div class="row">
-      <input type="text" id="kw" placeholder="课程名 / 课程号 / 教师" />
+      <input type="text" id="kw" placeholder="课程名 / 课程号 / 学院 / ID（原站可搜教师）" />
       <button class="primary" id="btn-search">搜索</button>
+    </div>
+    <div class="row">
+      <button id="source-local">本地目录</button><button id="source-server">原站搜索</button>
+      <button id="btn-catalog">共享目录</button>
     </div>
     <div class="row">
       <div class="dd" id="dd-sem">
@@ -147,7 +151,7 @@
     </div>
     <div class="row" style="margin-bottom:6px">
       <span class="hint" id="cacheHint" style="flex:1"></span>
-      <button id="btn-clear-cache" style="padding:3px 8px;font-size:11px">清空缓存</button>
+      <button id="btn-clear-cache" style="padding:3px 8px;font-size:11px">清空个人缓存</button>
     </div>
     <div id="courses"></div>
   </div>
@@ -191,6 +195,7 @@
   </div>
 
   <div id="status">就绪</div>
+  <script src="catalog.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

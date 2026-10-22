@@ -1,6 +1,6 @@
 /*
  * popup.js
- * 所有网络请求委托给页面内 inject.js（MAIN world），避免 chrome-extension:// Origin 被 403。
+ * 原站请求委托给页面内 inject.js；共享目录仅从本机 IndexedDB 读取。
  */
 
 const $ = (id) => document.getElementById(id);
@@ -12,6 +12,7 @@ let curPage = 1;
 let siteTabId = null;
 let sessionLoadToken = 0;
 let courseLoadToken = 0;
+let searchSource = 'auto';
 
 function setStatus(t, cls) {
   $('status').textContent = t;
@@ -131,8 +132,8 @@ function courseCard(c) {
   const yearVal = c.school_year || c.year || '';
   const semVal = c.semester !== undefined ? c.semester : '';
   const year = yearVal ? `<span class="tag year">${esc(yearVal)}-${esc(semVal)}</span>` : '';
-  const fromCache = c._fromCache ? '<span class="tag hidden">本地</span>' : '';
-  const hiddenTag = c._fromCache && c.visibility === 2 ? '<span class="tag hidden">已隐藏</span>' : '';
+  const fromCache = c._fromCache ? '<span class="tag hidden">个人缓存</span>' : c._fromShared ? '<span class="tag">共享目录</span>' : '';
+  const hiddenTag = (c._fromCache || c._fromShared) && c.visibility === 2 ? '<span class="tag hidden">已隐藏</span>' : '';
   el.innerHTML =
     `<div class="name">${esc(name)}<span class="tag">${esc(c.code || c.id || '')}</span>${year}${fromCache}${hiddenTag}</div>` +
     `<div class="meta">${esc(c.college_name || c.college || '')}${profs ? ' · ' + esc(profs) : ''} · ID ${c.id}</div>`;
@@ -152,80 +153,45 @@ function courseCard(c) {
 
 async function loadCourses(page) {
   const myToken = ++courseLoadToken;
-  curPage = page;
   const kw = $('kw').value.trim();
   const semester = selectedSemester;
   $('courses').innerHTML = '';
   setStatus('加载中…');
-
-  // 1) 先查本地扫描缓存（合并所有已扫学年），能搜到隐藏课程
-  let cacheRows = [];
-  let cacheYears = [];
-  {
-    const cache = await loadAllScanCache();
-    cacheYears = cache.years;
-    if (cache.items.length && kw) {
-      cacheRows = matchCache(cache.items, kw);
-      if (semester) {
-        const sem = SEMESTERS.find((s) => String(s.id) === String(semester));
-        const m = sem && sem.label.match(/(\d{4}-\d{4}) 第(\d)学期/);
-        cacheRows = m ? cacheRows.filter((c) => c.year === m[1] && String(c.semester) === m[2]) : [];
-      }
-    }
-  }
-
-  // 2) 服务端搜索
-  let srvList = [], srvTotal = 0, srvLast = 1, srvErr = null;
   try {
-    const r = await call('courseList', { page, keyword: kw, semesterId: semester });
-    srvList = r.list || [];
-    srvTotal = r.total || 0;
-    srvLast = r.lastPage || 1;
-  } catch (e) {
-    srvErr = e.message;
-  }
-  if (myToken !== courseLoadToken) return;
-
-  // 3) 合并：缓存命中排前面，服务端结果去重后追加
-  const seen = new Set();
-  const merged = [];
-  cacheRows.slice(0, 200).forEach((c) => {
-    if (seen.has(c.id)) return;
-    seen.add(c.id);
-    merged.push(c);
-  });
-  srvList.forEach((c) => {
-    if (seen.has(c.id)) return;
-    seen.add(c.id);
-    merged.push(c);
-  });
-
-  $('pageInfo').textContent = srvErr
-    ? ''
-    : `服务端 ${srvTotal} 门 / ${srvLast} 页` + (cacheRows.length ? ` · 本地命中 ${cacheRows.length}` : '');
-
-  // 缓存状态提示
-  const cacheHint = $('cacheHint');
-  if (cacheHint) {
-    if (cacheYears.length) {
-      const parts = cacheYears.map((y) => `${y.year}(${y.count}${y.partial ? '，未扫完' : ''})`).join(' ');
-      cacheHint.textContent = `本地已缓存：${parts}`;
+    const cache = await loadAllScanCache();
+    let shared = null, warning = cache.error || '';
+    try { shared = await YhktCatalog.load(); }
+    catch (e) { warning += ' 共享目录读取失败：' + e.message; }
+    if (myToken !== courseLoadToken) return;
+    const source = searchSource === 'auto' ? (shared || cache.items.length ? 'local' : 'server') : searchSource;
+    $('source-local').classList.toggle('primary', source === 'local');
+    $('source-server').classList.toggle('primary', source === 'server');
+    $('cacheHint').textContent = `共享目录 ${shared ? shared.metadata.recordCount + '（' + shared.metadata.date + '）' : '未导入'} · 个人缓存 ${cache.items.length}` + (warning ? ' · ' + warning : '');
+    let rows, total, last;
+    if (source === 'local') {
+      const sem = SEMESTERS.find(s => String(s.id) === String(semester));
+      const m = semester && sem && sem.label.match(/(\d{4}-\d{4}) 第(\d)学期/);
+      const matches = YhktCatalog.search(YhktCatalog.merge(shared, cache.items), kw, m && m[1], m && m[2]);
+      total = matches.length; last = Math.max(1, Math.ceil(total / 50));
+      page = Math.max(1, Math.min(page, last));
+      rows = matches.slice((page - 1) * 50, page * 50);
     } else {
-      cacheHint.textContent = '本地暂无扫描缓存，去「年份扫描」扫一遍才能搜到隐藏课程';
+      const r = await call('courseList', { page, keyword: kw, semesterId: semester });
+      rows = r.list || []; total = r.total || 0; last = r.lastPage || 1;
     }
+    if (myToken !== courseLoadToken) return;
+    curPage = page;
+    $('pageInfo').textContent = `${source === 'local' ? '本地' : '原站'} ${total} 门 · ${page}/${last} 页`;
+    $('btn-prev').disabled = page <= 1;
+    $('btn-next').disabled = page >= last;
+    if (!rows.length) $('courses').innerHTML = '<div class="hint">没有结果；可切换来源或在“共享目录”中导入目录。</div>';
+    rows.forEach(c => $('courses').appendChild(courseCard(c)));
+    setStatus(`本页 ${rows.length} 门 / 匹配 ${total} 门` + (source === 'local' ? '（每页 50 门，不代表缓存只有这些）' : '') + (warning ? '；' + warning : ''), warning ? 'err' : 'ok');
+  } catch (e) {
+    if (myToken !== courseLoadToken) return;
+    $('courses').innerHTML = '<div class="hint err">加载失败：' + esc(e.message) + '</div>';
+    setStatus('加载失败：' + e.message, 'err');
   }
-
-  if (!merged.length) {
-    $('courses').innerHTML = srvErr
-      ? `<div class="hint err">加载失败：${esc(srvErr)}</div>`
-      : '<div class="hint">没有结果</div>';
-    setStatus(srvErr ? '服务端加载失败' : '没有结果', srvErr ? 'err' : '');
-    return;
-  }
-
-  merged.forEach((c) => $('courses').appendChild(courseCard(c)));
-  setStatus(`已载入 ${merged.length} 门` + (cacheRows.length ? `（本地命中 ${cacheRows.length}，最多展示 200）` : '') +
-    (srvErr ? `；服务端失败：${srvErr}` : ''), srvErr ? 'err' : 'ok');
 }
 
 /* ---------------- 节次 ---------------- */
@@ -366,7 +332,7 @@ async function loadAllScanCache() {
   try {
     all = await chrome.storage.local.get(keys);
   } catch (e) {
-    return { items: [], years: [] };
+    return { items: [], years: [], error: '个人缓存读取失败：' + e.message };
   }
 
   const seen = new Set();
@@ -581,6 +547,9 @@ function scanCourseCard(c, isHidden) {
 document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => switchTab(t.dataset.tab); });
 
 $('btn-search').onclick = () => loadCourses(1);
+$('source-local').onclick = () => { searchSource = 'local'; loadCourses(1); };
+$('source-server').onclick = () => { searchSource = 'server'; loadCourses(1); };
+$('btn-catalog').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('catalog.html') });
 $('kw').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadCourses(1); });
 $('btn-prev').onclick = () => { if (curPage > 1) loadCourses(curPage - 1); };
 $('btn-next').onclick = () => loadCourses(curPage + 1);
@@ -643,7 +612,8 @@ $('toggle').onchange = async (e) => {
   }
 
   if (!tabs.length) {
-    setStatus('未找到延河课堂标签页，请先打开并登录 www.yanhekt.cn', 'err');
+    searchSource = 'local';
+    await loadCourses(1);
     return;
   }
 

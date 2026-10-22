@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "yanhekttool",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "课程搜索、学期筛选、往年目录扫描与本地缓存。",
   "minimum_chrome_version": "102",
   "permissions": ["storage", "scripting", "activeTab", "tabs"],
+  "optional_host_permissions": ["https://raw.githubusercontent.com/*"],
   "host_permissions": [
     "https://www.yanhekt.cn/*",
     "https://cbiz.yanhekt.cn/*"
