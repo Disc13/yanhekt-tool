@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "yanhekttool",
-  "version": "1.0.2",
-  "description": "课程搜索、节次目录与原站播放入口。",
+  "version": "1.1.0",
+  "description": "课程搜索、学期筛选、往年目录扫描与本地缓存。",
   "minimum_chrome_version": "102",
   "permissions": ["storage", "scripting", "activeTab", "tabs"],
   "host_permissions": [

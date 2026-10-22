@@ -9,6 +9,7 @@
 
   const state = { enabled: true, log: [] };
   const XCLIENT_KEY = '1138b69dfef641d9d7ba49137d2d4875';
+  const PATH_SEG = 'f4ff94d1bc715b077e1ebe03493799fd'; // cvideo 播放路径段（固定常量）
   const API = 'https://cbiz.yanhekt.cn';
 
   const log = (...a) => {
@@ -113,6 +114,33 @@
   }
 
   /*
+   * 学期 tag id → 学年学期映射（实测得出）。
+   * 仅供扩展自身的学期下拉使用；不再注入原站页面。
+   */
+  const SEMESTER_TAGS = [
+    [85, '2021-2022', 1],
+    [86, '2021-2022', 2],
+    [89, '2022-2023', 1],
+    [91, '2022-2023', 2],
+    [92, '2023-2024', 1],
+    [94, '2023-2024', 2],
+    [95, '2024-2025', 1],
+    [96, '2024-2025', 2],
+    [100, '2025-2026', 1],
+    [107, '2025-2026', 2],
+    [110, '2026-2027', 1]
+  ].map(([id, year, sem]) => ({
+    id: id,
+    parent_id: 4,
+    name: year + ' 第' + sem + '学期',
+    show_type: 0,
+    param: 'semesters',
+    sort: id,
+    created_at: '',
+    updated_at: ''
+  }));
+
+  /*
    * 关键：把页面调用的 v2 受限接口，替换成 v1 全量接口的数据。
    * 页面自己的列表渲染逻辑（缩略图/时长/章节/点击播放）原样复用，
    * 因此无权限课程页的表现与有权限课程页完全一致。
@@ -132,10 +160,6 @@
           transform: withPage ? shapeSessionsPage : shapeSessionsArray
         };
       }
-    },
-    {
-      test: (u) => u.indexOf('/v2/course/list') > -1,
-      build: () => null // 课程列表 v2 不改写
     }
   ];
 
@@ -229,19 +253,19 @@
         return;
       }
 
-      // v2 → v1：同步 XHR 无法异步改写，这里只在已有缓存时替换
+      // v2 → v1：同步 XHR 无法异步改写，只能用同步请求回源替换
       const rule = RESPONSE_REWRITES.find((r) => r.test(reqUrl));
       if (!rule) return;
       try {
         const cur = JSON.parse(xhr.responseText);
-        const list = cur && cur.data && cur.data.data;
-        if (Array.isArray(list) && list.length) return; // 有数据就不动
+        const list = cur && cur.data && (Array.isArray(cur.data) ? cur.data : cur.data.data);
+        if (Array.isArray(list) && list.length) return;
 
-        const m = reqUrl.match(/course_id=(\d+)/);
-        if (!m) return;
-        // 用同步 XHR 取 v1 数据（同域，页面上下文）
+        const plan = rule.build(reqUrl);
+        if (!plan) return;
+
         const sx = new OrigXHR();
-        sx.open('GET', API + '/v1/course/session/list?course_id=' + m[1], false);
+        sx.open('GET', plan.url, false);
         const h = signHeaders();
         for (const k in h) { try { sx.setRequestHeader(k, h[k]); } catch (e) {} }
         try { sx.setRequestHeader('Origin', location.origin); } catch (e) {}
@@ -250,7 +274,6 @@
         if (sx.status !== 200) return;
 
         const v1 = JSON.parse(sx.responseText);
-        const plan = rule.build(reqUrl);
         const patched = JSON.stringify(plan.transform(v1));
         Object.defineProperty(xhr, 'responseText', { configurable: true, get: () => patched });
         Object.defineProperty(xhr, 'response', { configurable: true, get: () => patched });
@@ -279,19 +302,112 @@
 
   state.sessions = async (courseId) => toArray(await jsonGet('/v1/course/session/list?course_id=' + courseId));
 
+  /* ---------- 取流与播放 ---------- */
+  state.videoToken = (videoId) => jsonGet('/v1/auth/video/token?id=' + videoId).then((j) => j.data && j.data.token);
+  state.videoUrl = (videoId) => jsonGet('/v1/video?id=' + videoId).then((j) => j.data && j.data.main);
+
+  state.buildUrl = (raw, vt) => {
+    const ts = Math.floor(Date.now() / 1000);
+    const q = '?Xvideo_Token=' + vt +
+      '&Xclient_Timestamp=' + ts +
+      '&Xclient_Signature=' + md5(XCLIENT_KEY + '_v1_' + ts) +
+      '&Xclient_Version=v1&Platform=yhkt_user';
+    const i = raw.lastIndexOf('/');
+    if (i < 0) return raw + q;
+    return raw.substring(0, i) + '/' + PATH_SEG + raw.substring(i) + q;
+  };
+
+  /* 全屏播放器：取凭证 → 拼地址 → hls.js 播放 */
+  state.openPlayer = async (videoId, title) => {
+    const vt = await state.videoToken(videoId);
+    const raw = await state.videoUrl(videoId);
+    if (!vt || !raw) throw new Error('无法获取播放凭证或地址');
+    if (raw.indexOf('coss.yanhekt.cn') > -1) throw new Error('早期 MP4 资源暂不由此播放器处理，请打开原站课时确认');
+    const url = state.buildUrl(raw, vt);
+
+    let box = document.getElementById('__yhkt_player');
+    if (state._stop) state._stop();
+    if (box) box.remove();
+    box = document.createElement('div');
+    box.id = '__yhkt_player';
+    box.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.94);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px';
+
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:10px;align-items:center;color:#dfe6f0;font:14px "Microsoft YaHei",sans-serif';
+    const label = document.createElement('span');
+    label.textContent = title || ('视频 ' + videoId);
+    const btnClose = document.createElement('button');
+    btnClose.textContent = '关闭';
+    btnClose.style.cssText = 'padding:5px 14px;border-radius:6px;border:1px solid #3a4250;background:#232a35;color:#d7dde7;cursor:pointer';
+    btnClose.onclick = () => {
+      if (state._stop) state._stop();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      box.remove();
+    };
+    bar.appendChild(label);
+    bar.appendChild(btnClose);
+
+    const video = document.createElement('video');
+    video.controls = true;
+    video.autoplay = true;
+    video.style.cssText = 'width:min(1200px,92vw);max-height:78vh;background:#000;border-radius:8px';
+
+    const tip = document.createElement('div');
+    tip.style.cssText = 'color:#8b95a5;font:12px "Microsoft YaHei",sans-serif;max-width:90vw;word-break:break-all';
+    tip.textContent = '加载播放引擎…';
+
+    box.appendChild(bar);
+    box.appendChild(video);
+    box.appendChild(tip);
+    document.body.appendChild(box);
+
+    const Hls = window.Hls; // 点击播放时由扩展注入随包发布的固定版本，不执行远程代码
+    if (Hls && typeof Hls.isSupported === 'function' && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false, xhrSetup: (xhr) => { try { xhr.withCredentials = false; } catch (e) {} } });
+      hls.on(Hls.Events.ERROR, (evt, data) => {
+        if (data && data.fatal) tip.textContent = 'HLS 错误：' + data.type + '/' + data.details;
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        tip.textContent = 'hls.js 已就绪 · 开始播放';
+        video.play().catch(() => {});
+      });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      state._stop = () => { try { hls.destroy(); } catch (e) {} };
+    } else {
+      video.src = url;
+      tip.textContent = '原生播放（hls.js 未加载）';
+    }
+    return { opened: true }; // 不通过跨 world 消息返回带凭证的视频地址
+  };
+
   /* ---------- RPC 服务端：响应 hook.js 的调用 ---------- */
-  // 所有请求都在页面上下文执行，Origin = https://www.yanhekt.cn，服务端正常放行
+    // 请求在页面登录上下文执行；服务端仍可拒绝，错误须向调用方保留。
   const RPC = {
     ping: () => ({ ready: true }),
 
-    // 课程列表（搜索 / 分页）
+    // 学期标签（供前端下拉使用）
+    semesters: () => ({
+      defaultId: 110,
+      list: SEMESTER_TAGS.map((t) => ({ id: t.id, name: t.name, year: t.name.split(' ')[0] }))
+    }),
+
+    // 课程列表（搜索 / 分页 / 按学期过滤）
+    // 使用已采样的 v1 semesters[] 参数；不为原站搜索改写请求。
     courseList: (p) => {
-      const page = p && p.page ? p.page : 1;
+      const page = (p && p.page) || 1;
+      const size = (p && p.pageSize) || 20;
+      const parts = ['/v1/course/list?page=' + page, 'page_size=' + size];
       const kw = p && p.keyword ? String(p.keyword).trim() : '';
-      const q = kw
-        ? '/v1/course/list?keyword=' + encodeURIComponent(kw) + '&page=' + page + '&page_size=20'
-        : '/v1/course/list?page=' + page + '&page_size=20';
-      return jsonGet(q).then((j) => ({
+      if (kw) parts.push('keyword=' + encodeURIComponent(kw));
+      const sem = p && p.semesterId;
+      if (sem) parts.push('semesters[]=' + sem);
+      const sy = p && p.schoolYear;
+      if (sy) parts.push('school_year=' + encodeURIComponent(sy));
+
+      return jsonGet(parts.join('&')).then((j) => ({
         total: (j.data && j.data.total) || 0,
         lastPage: (j.data && j.data.last_page) || 1,
         list: (j.data && j.data.data) || []
@@ -301,15 +417,64 @@
     // 课程详情
     courseDetail: (p) => jsonGet('/v1/course?id=' + p.courseId).then((j) => j.data || {}),
 
-    // 全部节次（v1 不过滤权限）
+    // v1 节次目录；仍可能返回登录、权限或其他业务错误
     sessions: (p) => state.sessions(p.courseId).then((arr) =>
       arr.map((s) => ({
         id: s.id,
         title: s.title,
         started_at: s.started_at,
-        location: s.location
+        location: s.location,
+        videoId: (s.video_ids && s.video_ids[0]) || null
       }))
     ),
+
+    // 在页面内打开播放器
+    play: (p) => state.openPlayer(p.videoId, p.title || ''),
+
+    /*
+     * 搜台扫描：批量探测 ID 区间。
+     * 样本中部分 visibility:2 课程未在列表出现，但详情仍可返回；
+     * 按预设区间取详情，不保证涵盖全站或录像可用。
+     */
+    scanBatch: async (p) => {
+      const start = Number(p.start), end = Number(p.end);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
+        throw new Error('扫描区间无效');
+      }
+      const limit = Math.max(1, Math.min(Number(p.limit) || 20, 20));
+      const ids = [];
+      for (let i = start; i <= end && ids.length < limit; i++) ids.push(i);
+      const hdrs = signHeaders();
+      let batchError = null;
+      const results = await Promise.all(ids.map(async (id) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        try {
+          const r = await origFetch(API + '/v1/course?id=' + id, {
+            headers: hdrs, credentials: 'omit', signal: controller.signal
+          });
+          if (r.status === 404) return null;
+          if (!r.ok) throw new Error('扫描请求失败 HTTP ' + r.status);
+          const j = await r.json();
+          if (j && j.code !== 0 && j.code !== '0' && /不存在|未找到|not found/i.test(j.message || '')) return null;
+          assertApiBody(j);
+          return j.data && j.data.id ? {
+            id: j.data.id,
+            name: j.data.name_zh || '',
+            year: j.data.school_year || '',
+            semester: j.data.semester,
+            state: j.data.state,
+            visibility: j.data.visibility,
+            college: j.data.college_name || ''
+          } : null;
+        } catch (e) {
+          batchError = e;
+          return null;
+        } finally { clearTimeout(timer); }
+      }));
+      if (batchError) throw batchError; // 整批重试，不把网络失败当成不存在并跳过游标
+      return { items: results.filter(Boolean), scanned: ids.length, next: ids[ids.length - 1] + 1 };
+    },
 
     // 是否已登录
     authState: () => ({ token: !!getToken() })
